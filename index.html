@@ -3,15 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Number Line Jump Visualizer</title>
+  <title>Multi-Step Integer Number Line Jump Visualizer</title>
   <style>
     :root {
       --bg: #090d16;
       --card: #151d2a;
       --text: #f8fafc;
-      --start-dot: #38bdf8;  /* High-contrast Cyan */
-      --jump-arrow: #f43f5e; /* High-contrast Pink/Red */
-      --result-text: #4ade80;/* High-contrast Green */
+      --start-dot: #38bdf8;  /* Cyan for start */
+      --result-text: #4ade80;/* Green for final result */
       --line: #64748b;
     }
 
@@ -30,7 +29,7 @@
       min-height: 100vh;
       margin: 0;
       padding: 0.5rem;
-      overflow: hidden; /* Prevents scrollbars */
+      overflow: hidden;
     }
 
     .container {
@@ -43,7 +42,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      position: relative; /* Enables absolute positioning for the Reset button */
+      position: relative;
     }
 
     h1 {
@@ -83,7 +82,6 @@
 
     .inputs {
       display: flex;
-      gap: 3rem;
       justify-content: center;
       align-items: center;
       margin-bottom: 0.75rem;
@@ -113,7 +111,7 @@
       color: #fff;
       font-size: 2.2rem;
       font-weight: bold;
-      width: 240px;
+      width: 550px;
       text-align: center;
       transition: border-color 0.2s, box-shadow 0.2s;
     }
@@ -125,12 +123,17 @@
     }
 
     .equation {
-      font-size: 3.5rem;
+      font-size: 3rem;
       text-align: center;
       font-weight: 800;
       margin: 0.25rem 0 0.5rem 0;
       min-height: 4.2rem;
       letter-spacing: 0.02em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0.4rem;
     }
 
     .canvas-container {
@@ -169,23 +172,18 @@
 <body>
 
   <div class="container">
-    <button id="resetBtn" class="btn-reset" title="Clear inputs and start over">Reset</button>
+    <button id="resetBtn" class="btn-reset" title="Clear input and start over">Reset</button>
 
     <h1>Integer Number Line Jump</h1>
     
     <div class="inputs">
       <div class="input-group">
-        <label for="num1">Start Position</label>
-        <input type="text" id="num1" placeholder="Start" autocomplete="off" autofocus />
-      </div>
-      
-      <div class="input-group">
-        <label for="num2">Move / Jump</label>
-        <input type="text" id="num2" placeholder="Jump" autocomplete="off" />
+        <label for="num1">Expression (e.g. -2+5-3--2+-8)</label>
+        <input type="text" id="num1" placeholder="e.g. -2+5-3--2+-8" autocomplete="off" autofocus />
       </div>
     </div>
 
-    <div class="equation" id="equation">Enter numbers above</div>
+    <div class="equation" id="equation">Type an expression above</div>
 
     <div class="canvas-container">
       <svg id="numberLineSvg" viewBox="0 0 1400 320"></svg>
@@ -197,107 +195,152 @@
         <span>Start Point</span>
       </div>
       <div class="legend-item">
-        <div class="dot" style="background: var(--jump-arrow)"></div>
-        <span>Jump Arrow</span>
+        <div class="dot" style="background: var(--result-text)"></div>
+        <span>Final Result</span>
       </div>
     </div>
   </div>
 
   <script>
     const input1 = document.getElementById('num1');
-    const input2 = document.getElementById('num2');
     const resetBtn = document.getElementById('resetBtn');
 
+    // Distinct vibrant colors for successive jump arrows
+    const jumpColors = [
+      '#f43f5e', // Rose / Pink
+      '#fbbf24', // Amber / Yellow
+      '#a855f7', // Purple
+      '#38bdf8', // Cyan
+      '#fb923c', // Orange
+      '#34d399', // Emerald
+      '#e879f9', // Fuchsia
+      '#f87171'  // Light Red
+    ];
+
     input1.addEventListener('input', updateVisualizer);
-    input2.addEventListener('input', updateVisualizer);
     resetBtn.addEventListener('click', resetAll);
+
+    input1.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        resetAll();
+      }
+    });
 
     function resetAll() {
       input1.value = '';
-      input2.value = '';
       input1.focus();
       updateVisualizer();
     }
 
-    // Evaluates inputs with parentheses like -(-3), +(-5), -(-(-2)), etc.
-    function parseIntegerExpr(expr) {
-      if (!expr) return { valid: false, value: 0 };
-      
+    function parseMultiStepExpression(expr) {
+      if (!expr) return { type: 'empty' };
+
       let cleaned = expr.replace(/\s+/g, '');
-      if (cleaned === '' || cleaned === '-' || cleaned === '+') {
-        return { valid: false, value: 0 };
-      }
 
-      let prev;
-      do {
-        prev = cleaned;
-        cleaned = cleaned
-          .replace(/\(-\+/g, '(-')
-          .replace(/\(\+-/g, '(-')
-          .replace(/\(--/g, '(')
-          .replace(/\(\++/g, '(')
-          .replace(/-\(/g, '-1*(')
-          .replace(/\+\(/g, '+1*(')
-          .replace(/--/g, '+')
-          .replace(/\+\+/g, '+')
-          .replace(/\+-/g, '-')
-          .replace(/-\+/g, '-');
-      } while (cleaned !== prev);
-
-      cleaned = cleaned.replace(/\(([-+]?\d+)\)/g, '$1');
-
-      try {
-        if (!/^[0-9+\-*()]+$/.test(cleaned)) {
-          return { valid: false, value: 0 };
+      const firstNumMatch = cleaned.match(/^[+-]?\d+/);
+      if (!firstNumMatch) {
+        if (/^[+-]?\d*$/.test(cleaned) && cleaned !== '' && cleaned !== '+' && cleaned !== '-') {
+          return { type: 'partialStart', start: parseInt(cleaned, 10) };
         }
-        const parsed = Function(`'use strict'; return (${cleaned})`)();
-        return {
-          valid: typeof parsed === 'number' && !isNaN(parsed) && Number.isInteger(parsed),
-          value: parsed
-        };
-      } catch (e) {
-        return { valid: false, value: 0 };
+        return { type: 'invalid' };
       }
+
+      let currentPos = firstNumMatch[0].length;
+      let startVal = parseInt(firstNumMatch[0], 10);
+      let steps = [];
+
+      while (currentPos < cleaned.length) {
+        const rest = cleaned.slice(currentPos);
+        const stepMatch = rest.match(/^([+-]+)([+-]?\d+)/);
+        if (!stepMatch) {
+          return { 
+            type: 'partial', 
+            start: startVal, 
+            steps, 
+            trailing: rest 
+          };
+        }
+
+        const opString = stepMatch[1];
+        const numVal = parseInt(stepMatch[2], 10);
+
+        let absVal = Math.abs(numVal);
+        let minusCount = (opString.match(/-/g) || []).length;
+        if (numVal < 0) minusCount++;
+
+        let effectiveVal = minusCount % 2 === 1 ? -absVal : absVal;
+        let displayOp = minusCount % 2 === 1 ? '-' : '+';
+
+        steps.push({
+          displayOp: displayOp,
+          absVal: absVal,
+          value: effectiveVal
+        });
+
+        currentPos += stepMatch[0].length;
+      }
+
+      return {
+        type: 'full',
+        start: startVal,
+        steps: steps
+      };
     }
 
     function updateVisualizer() {
-      const raw1 = input1.value.trim();
-      const raw2 = input2.value.trim();
-
-      const startRes = parseIntegerExpr(raw1);
-      const jumpRes = parseIntegerExpr(raw2);
-
+      const rawText = input1.value.trim();
       const eqDiv = document.getElementById('equation');
 
-      // Empty Box 1 -> Blank canvas state
-      if (!startRes.valid) {
-        eqDiv.innerHTML = `<span style="color: #475569;">Type a start number...</span>`;
+      const parsed = parseMultiStepExpression(rawText);
+
+      if (parsed.type === 'empty') {
+        eqDiv.innerHTML = `<span style="color: #475569;">Type an expression (e.g. -2+5-3--2+-8)...</span>`;
         drawEmptyNumberLine(-10, 10);
         return;
       }
 
-      const startVal = startRes.value;
-
-      // Empty Box 2 -> Show only start dot
-      if (!jumpRes.valid) {
-        eqDiv.innerHTML = `<span style="color: var(--start-dot)">${startVal}</span>`;
-        drawStartOnly(startVal);
+      if (parsed.type === 'invalid') {
+        eqDiv.innerHTML = `<span style="color: #475569;">Invalid format (e.g. -2+5-3)</span>`;
+        drawEmptyNumberLine(-10, 10);
         return;
       }
 
-      const jumpVal = jumpRes.value;
-      const endVal = startVal + jumpVal;
+      if (parsed.type === 'partialStart') {
+        eqDiv.innerHTML = `<span style="color: var(--start-dot)">${parsed.start}</span>`;
+        drawJumps(parsed.start, []);
+        return;
+      }
 
-      // Equation text formatting
-      let opSign = jumpVal >= 0 ? '+' : '-';
-      let absJump = Math.abs(jumpVal);
-      eqDiv.innerHTML = 
-        `<span style="color: var(--start-dot)">${startVal}</span> ` +
-        `<span style="color: #94a3b8">${opSign}</span> ` +
-        `<span style="color: var(--jump-arrow)">${absJump}</span> = ` +
-        `<span style="color: var(--result-text)">${endVal}</span>`;
+      if (parsed.type === 'partial') {
+        let html = `<span style="color: var(--start-dot)">${parsed.start}</span>`;
+        parsed.steps.forEach((s, idx) => {
+          let color = jumpColors[idx % jumpColors.length];
+          html += ` <span style="color: #64748b">${s.displayOp}</span> <span style="color: ${color}">${s.absVal}</span>`;
+        });
+        if (parsed.trailing) {
+          html += ` <span style="color: #64748b">${parsed.trailing}</span>`;
+        }
+        eqDiv.innerHTML = html;
+        drawJumps(parsed.start, parsed.steps);
+        return;
+      }
 
-      drawJump(startVal, endVal);
+      if (parsed.type === 'full') {
+        let curr = parsed.start;
+        let html = `<span style="color: var(--start-dot)">${parsed.start}</span>`;
+        
+        parsed.steps.forEach((s, idx) => {
+          curr += s.value;
+          let color = jumpColors[idx % jumpColors.length];
+          html += ` <span style="color: #64748b">${s.displayOp}</span> <span style="color: ${color}">${s.absVal}</span>`;
+        });
+
+        html += ` = <span style="color: var(--result-text)">${curr}</span>`;
+        eqDiv.innerHTML = html;
+
+        drawJumps(parsed.start, parsed.steps);
+      }
     }
 
     function drawEmptyNumberLine(minVal, maxVal) {
@@ -309,26 +352,24 @@
       const baselineY = 200;
       const getX = (val) => padding + ((val - minVal) / (maxVal - minVal)) * (width - 2 * padding);
 
-      // Thick Base Line
+      // Base Line
       svg.appendChild(createSvgElement('line', {
         x1: padding / 2, y1: baselineY,
         x2: width - padding / 2, y2: baselineY,
         stroke: '#475569', 'stroke-width': '7'
       }));
 
-      // Ticks & GIANT 48px Labels
+      // Ticks & Labels
       for (let i = minVal; i <= maxVal; i++) {
         const x = getX(i);
         const isZero = i === 0;
 
-        // Taller tick marks
         svg.appendChild(createSvgElement('line', {
           x1: x, y1: baselineY - 18, x2: x, y2: baselineY + 18,
           stroke: isZero ? '#38bdf8' : '#64748b',
           'stroke-width': isZero ? '7' : '5'
         }));
 
-        // Numbers at 48px font size
         const text = createSvgElement('text', {
           x: x, y: baselineY + 75, 'text-anchor': 'middle',
           fill: isZero ? '#38bdf8' : '#ffffff',
@@ -339,9 +380,16 @@
       }
     }
 
-    function drawStartOnly(startVal) {
-      let minVal = Math.min(0, startVal) - 3;
-      let maxVal = Math.max(0, startVal) + 3;
+    function drawJumps(startVal, steps) {
+      let points = [startVal];
+      let curr = startVal;
+      steps.forEach(s => {
+        curr += s.value;
+        points.push(curr);
+      });
+
+      let minVal = Math.min(...points) - 3;
+      let maxVal = Math.max(...points) + 3;
       if (maxVal - minVal < 10) { minVal -= 2; maxVal += 2; }
 
       drawEmptyNumberLine(minVal, maxVal);
@@ -350,62 +398,55 @@
       const padding = 100, width = 1400, baselineY = 200;
       const getX = (val) => padding + ((val - minVal) / (maxVal - minVal)) * (width - 2 * padding);
 
-      // Large Start Dot
+      const defs = createSvgElement('defs', {});
+      let defsHtml = '';
+      steps.forEach((s, idx) => {
+        let color = jumpColors[idx % jumpColors.length];
+        defsHtml += `
+          <marker id="jumpArrow${idx}" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="${color}" />
+          </marker>
+        `;
+      });
+      defs.innerHTML = defsHtml;
+      svg.appendChild(defs);
+
+      // Start Dot (Cyan)
       svg.appendChild(createSvgElement('circle', {
         cx: getX(startVal), cy: baselineY, r: '18',
         fill: '#38bdf8', stroke: '#090d16', 'stroke-width': '5'
       }));
-    }
 
-    function drawJump(startVal, endVal) {
-      const values = [0, startVal, endVal];
-      let minVal = Math.min(...values) - 3;
-      let maxVal = Math.max(...values) + 3;
-      if (maxVal - minVal < 10) { minVal -= 2; maxVal += 2; }
+      curr = startVal;
+      steps.forEach((s, index) => {
+        let nextVal = curr + s.value;
+        let x1 = getX(curr);
+        let x2 = getX(nextVal);
+        let color = jumpColors[index % jumpColors.length];
 
-      drawEmptyNumberLine(minVal, maxVal);
+        if (curr !== nextVal) {
+          let midX = (x1 + x2) / 2;
+          // Dynamic arc heights so successive/overlapping jumps stack nicely and remain clear
+          let curveHeight = 85 + (index % 4) * 30;
+          let controlY = baselineY - curveHeight;
 
-      const svg = document.getElementById('numberLineSvg');
-      const padding = 100, width = 1400, baselineY = 200;
-      const getX = (val) => padding + ((val - minVal) / (maxVal - minVal)) * (width - 2 * padding);
+          let path = createSvgElement('path', {
+            d: `M ${x1} ${baselineY - 22} Q ${midX} ${controlY} ${x2} ${baselineY - 22}`,
+            fill: 'none', stroke: color, 'stroke-width': '7',
+            'marker-end': `url(#jumpArrow${index})`
+          });
+          svg.appendChild(path);
+        }
 
-      // Arrowhead Marker (Scaled down for proportional sizing)
-      const defs = createSvgElement('defs', {});
-      defs.innerHTML = `
-        <marker id="jumpArrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-          <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#f43f5e" />
-        </marker>
-      `;
-      svg.appendChild(defs);
+        curr = nextVal;
 
-      const x1 = getX(startVal);
-      const x2 = getX(endVal);
-
-      // Start Dot
-      svg.appendChild(createSvgElement('circle', {
-        cx: x1, cy: baselineY, r: '18',
-        fill: '#38bdf8', stroke: '#090d16', 'stroke-width': '5'
-      }));
-
-      // Curved Jump Arrow
-      if (startVal !== endVal) {
-        const midX = (x1 + x2) / 2;
-        const curveHeight = 110;
-        const controlY = baselineY - curveHeight;
-
-        const path = createSvgElement('path', {
-          d: `M ${x1} ${baselineY - 22} Q ${midX} ${controlY} ${x2} ${baselineY - 22}`,
-          fill: 'none', stroke: '#f43f5e', 'stroke-width': '8',
-          'marker-end': 'url(#jumpArrow)'
-        });
-        svg.appendChild(path);
-
-        // End Dot
+        let isFinal = (index === steps.length - 1);
         svg.appendChild(createSvgElement('circle', {
-          cx: x2, cy: baselineY, r: '16',
-          fill: '#4ade80', stroke: '#090d16', 'stroke-width': '4'
+          cx: x2, cy: baselineY, r: isFinal ? '18' : '14',
+          fill: isFinal ? '#4ade80' : color,
+          stroke: '#090d16', 'stroke-width': '4'
         }));
-      }
+      });
     }
 
     function createSvgElement(tag, attrs) {
